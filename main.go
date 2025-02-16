@@ -17,19 +17,50 @@ import (
 )
 
 type redditResponse struct {
+	Kind string `json:"kind"`
 	Data struct {
-		Children []struct {
+		After     string `json:"after"`
+		Dist      int    `json:"dist"`
+		ModHash   string `json:"modhash"`
+		GeoFilter string `json:"geo_filter"`
+		Children  []struct {
+			Kind string `json:"kind"`
 			Data struct {
-				Kind  string `json:"kind"`
-				Title string `json:"title"`
-				URL   string `json:"url"`
-				Data  struct {
-				} `json:"data"`
-			}
+				ApprovedAtUtc       interface{} `json:"approved_at_utc"`
+				Subreddit           string      `json:"subreddit"`
+				SelfText            string      `json:"selftext"`
+				Url                 string      `json:"url"`
+				UrlOverriddenByDest string      `json:"url_overridden_by_dest"`
+				MediaMetadata       map[string]struct {
+					Status string `json:"status"`
+					Id     string `json:"id"`
+					E      string `json:"e"`
+					M      string `json:"m"`
+					S      struct {
+						U string `json:"u"`
+						X int    `json:"x"`
+						Y int    `json:"y"`
+					} `json:"s"`
+					P []struct {
+						U string `json:"u"`
+						X int    `json:"x"`
+						Y int    `json:"y"`
+					} `json:"p"`
+				} `json:"media_metadata"`
+				Preview struct {
+					Enabled bool `json:"enabled"`
+					Images  []struct {
+						Source struct {
+							Url    string `json:"url"`
+							Width  int    `json:"width"`
+							Height int    `json:"height"`
+						} `json:"source"`
+					} `json:"images"`
+				} `json:"preview"`
+			} `json:"data"`
 		} `json:"children"`
 	} `json:"data"`
 }
-
 type CustomContext struct {
 	echo.Context
 	redis *redis.Client
@@ -49,7 +80,7 @@ func main() {
 			if redisUrl == "" {
 				c.Logger().Warn("REDIS_URL not set, skipping redis connection. Use REDIS_URL to cache the image")
 
-				return next(&CustomContext{})
+				return next(&CustomContext{c, nil})
 			}
 
 			redisPort := os.Getenv("REDIS_PORT")
@@ -95,31 +126,46 @@ func main() {
 		AllowMethods: []string{http.MethodGet, http.MethodOptions},
 	}))
 
-	path := os.Getenv("PATH")
+	path := os.Getenv("PATH_PREFIX")
 	if path == "" {
 		path = "/"
 	}
 	e.GET(path, func(c echo.Context) error {
 		cc := c.(*CustomContext)
-		latestImage := cc.redis.Get(context.TODO(), "latestImage")
-		latestImageVal, err := latestImage.Result()
+
+		var latestImageVal string
+		var err error
+		if cc.redis != nil {
+			latestImage := cc.redis.Get(context.TODO(), "latestImage")
+			latestImageVal, err = latestImage.Result()
+		}
 
 		if err != nil || latestImageVal == "" {
 			c.Logger().Info("Fetching latest image")
 			latestImageVal = getLatestImage()
-			cmd := cc.redis.Set(context.TODO(), "latestImage", latestImageVal, 600*time.Second)
-			if cmd.Err() != nil {
-				c.Logger().Warn("could not cache image")
+			if cc.redis != nil {
+				cmd := cc.redis.Set(context.TODO(), "latestImage", latestImageVal, 600*time.Second)
+				if cmd.Err() != nil {
+					c.Logger().Warn("could not cache image")
+				}
 			}
 		} else {
 			c.Logger().Info("Image name fetched from cache")
 		}
 
-		latestImageBin := cc.redis.Get(context.TODO(), "latestImage:bin:"+latestImageVal)
-		imageData := latestImageBin.Val()
+		var imageData string
+		if cc.redis != nil {
+			latestImageBin := cc.redis.Get(context.TODO(), "latestImage:bin:"+latestImageVal)
+			imageData = latestImageBin.Val()
+		}
+
 		if imageData == "" {
 			response, err := http.Get(latestImageVal)
 			if err != nil {
+				return c.String(http.StatusInternalServerError, "Error fetching image")
+			}
+
+			if response.StatusCode != http.StatusOK {
 				return c.String(http.StatusInternalServerError, "Error fetching image")
 			}
 
@@ -135,6 +181,10 @@ func main() {
 			imageData = string(imageDataBytes)
 
 			go func(data string) {
+				if cc.redis == nil {
+					return
+				}
+
 				_, err = cc.redis.Set(context.TODO(), "latestImage:bin:"+latestImageVal, data, 600*time.Second).Result()
 				if err != nil {
 					c.Logger().Warn("could not cache image")
@@ -177,7 +227,13 @@ func getLatestImage() string {
 		panic(err)
 	}
 
-	url := redditData.Data.Children[1].Data.URL
+	index := 1
+	url := redditData.Data.Children[index].Data.UrlOverriddenByDest
+
+	for strings.Contains(url, "gallery") {
+		index++
+		url = redditData.Data.Children[index].Data.UrlOverriddenByDest
+	}
 
 	return url
 }
