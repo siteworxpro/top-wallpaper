@@ -1,4 +1,4 @@
-FROM siteworxpro/golang:1.23.5 AS build
+FROM siteworxpro/golang:1.24.0 AS build
 
 WORKDIR /app
 
@@ -17,5 +17,10 @@ EXPOSE 8080
 WORKDIR /app
 
 COPY --from=build /app/top-wallpaper /app/top-wallpaper
+
+RUN  adduser -u 1001 -g appuser appuser -D && \
+    chown -R appuser:appuser /app
+
+USER 1001
 
 ENTRYPOINT ["/app/top-wallpaper"]

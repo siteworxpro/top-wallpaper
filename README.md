@@ -30,7 +30,7 @@ PORT: Port to serve the image (default: 8080)
 
 ## docker
 ```shell
-docker run -d -p 8080:8080 --name top-wallpaper -e REDIS_URL=redis -e REDIS_PORT=6379 -e REDIS_PASSWORD=pass -e REDIS_DB=0 -e ALLOWED_ORIGINS=http://localhost:8080 -e PATH=/wallpaper -e PORT=8080 --network=host --restart=always siteworxpro/top-wallpaper:latest
+docker run --rm -d -p 8080:8080 --name top-wallpaper -e REDIS_URL=redis -e REDIS_PORT=6379 -e REDIS_PASSWORD=pass -e REDIS_DB=0 -e ALLOWED_ORIGINS=http://localhost:8080 -e PATH=/wallpaper -e PORT=8080 siteworxpro/top-wallpaper:latest
 ```
 
 ## License
