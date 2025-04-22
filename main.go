@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
 	"github.com/redis/go-redis/v9"
+	"github.com/siteworxpro/top-wallpaper/resize"
 	"io"
 	"net/http"
 	"os"
@@ -142,7 +143,11 @@ func main() {
 
 		if err != nil || latestImageVal == "" {
 			c.Logger().Info("Fetching latest image")
-			latestImageVal = getLatestImage()
+			latestImageVal, err = getLatestImage()
+			if err != nil {
+				return c.String(http.StatusInternalServerError, "Error fetching latest image")
+			}
+
 			if cc.redis != nil {
 				cmd := cc.redis.Set(context.TODO(), "latestImage", latestImageVal, 600*time.Second)
 				if cmd.Err() != nil {
@@ -180,6 +185,12 @@ func main() {
 
 			imageData = string(imageDataBytes)
 
+			imageData, err := resize.Shrink(imageData, 1200, 70)
+
+			if err != nil {
+				return c.String(http.StatusInternalServerError, "Error resizing image")
+			}
+
 			go func(data string) {
 				if cc.redis == nil {
 					return
@@ -210,21 +221,26 @@ func main() {
 	e.Logger.Fatal(e.Start(":" + port))
 }
 
-func getLatestImage() string {
+func getLatestImage() (string, error) {
+
 	response, err := http.Get("https://www.reddit.com/r/wallpaper/.json")
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(response.Body)
+
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("error fetching reddit data: %s", response.Status)
+	}
 
 	jsonBytes, err := io.ReadAll(response.Body)
 
 	redditData := redditResponse{}
 	err = json.Unmarshal(jsonBytes, &redditData)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
 	index := 1
@@ -235,5 +251,5 @@ func getLatestImage() string {
 		url = redditData.Data.Children[index].Data.UrlOverriddenByDest
 	}
 
-	return url
+	return url, nil
 }
